@@ -1,0 +1,241 @@
+---
+title: 'Final Group Project by Team 7'
+subtitle: "IS5126 Hands-on with Applied Analytics"
+author: "Team Members: Goh Khai Hong, Sonakshi Mendiratta, Toshal Patel, Vignesh Thangaraju"
+date: "March 10, 2021"
+output:
+  html_document:
+    theme: simplex
+    code_folding: show
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    number_sections: no
+    highlight: pygments
+    df_print: paged
+    fig_caption: no
+  pdf_document:
+    toc_depth: '3'
+fontsize: 18pt
+---
+
+#  Causal Inference with Instrumental Variable Approach
+
+## Preparation
+R provides a one-stop shop for instrumental variable approach and two-stage least square in its popular `ivreg` package. It comes with the standard regression functionality such as estimates reporting, regression inference, heteroskedasticity-robust/clustered s.e., prediction and so on. It also works well with other diagnostic packages such as `car`, `sandwich`, `lmtest`, etc. Please `install.packages(ivreg)` to locally setup the package.
+
+### Loading Packages
+```{r load-libraries, echo=TRUE, message=FALSE, warning=FALSE}
+# load required packages
+library(dplyr) 
+library(tidyr)
+library(RColorBrewer)
+library(ggplot2)
+library(knitr)
+library(png)
+library(animation)
+library(gifski)
+library(table1)
+library(gtsummary)
+library(gt)
+library(corrplot)
+library(xtable)
+library(car)
+library(DT)
+library(AER)   
+library(plm)    
+library(lattice)
+library(wooldridge)
+library(ivreg) # IV-regression
+```
+
+### Load Required Dataset
+The pre-processed airbnb dataset is loaded and used for causal analysis.
+
+```{r load-dataset, echo=TRUE, message=FALSE, warning=FALSE}
+
+# load required dataset
+airbnb_dta <- read.csv("../IS5126_Team07_Dataset/Mar2019_Feb2020_Airbnb_panel_2.csv", header = TRUE)
+
+```
+
+## Causal Analysis Using Intrumental Variables (IVs)
+The causal analysis was performed on the following endogenous predictor X and proposed instrumental variables Z: 
+
+Case 1:
+- X = "cancellation_policy_flexible"
+- Z = "host_response_rate"
+- Y = "price"
+
+Case 2:
+- X= "number_of_reviews"
+- Z1= "experience"
+- Z2= "amenities_score"
+- Y = "price"
+
+
+```{r select-column, echo=TRUE, message=FALSE, warning=FALSE}
+
+# select required columns
+rhs = c(colnames(airbnb_dta))
+rhs = rhs[rhs != 'listing_id']
+rhs = rhs[rhs != 'last_scraped']
+rhs = rhs[rhs != 'price']
+
+```
+
+### Case 1 : Multivariate 2SLS using 1 IV (X = cancellation_policy_flexible, Z = host_response_time)
+
+```{r run-2sls, echo=TRUE, message=FALSE, warning=FALSE}
+
+# running a multivariate 2SLS of price on cancellation_policy_flexible and others, with `host_response_rate` as IV
+# observe that the formula for 2SLS highlights the "two stages" of OLS regression
+rhs.1stage.c1 = rhs[rhs != 'cancellation_policy_flexible'] 
+rhs.2stage.c1 = rhs[rhs != 'host_response_time']  # host_response_rate
+
+# 2SLS
+fmla.1stage.c1 = paste(rhs.1stage.c1, collapse = " + ")
+fmla.2stage.c1 = paste("price ~ ", paste(rhs.2stage.c1, collapse = " + "), sep = "")
+fmla.2sls.c1 = paste(fmla.2stage.c1, fmla.1stage.c1, sep = " | ")
+fmla.2sls.c1 = as.formula(fmla.2sls.c1)
+
+# print out the formula for 2SLS
+print(fmla.2sls.c1)
+
+# running a 2SLS with IV being `host_response_rate`
+fit.2sls.c1 = ivreg(fmla.2sls.c1, data = airbnb_dta)
+summary(fit.2sls.c1, diagnostic = TRUE)
+
+
+```
+
+1. Weak instruments: We successfully reject the null in weak instrument tests. It means that we can conclude that the IVs is relevant to the endgenous variable (cancellation_policy_flexible).A consistent result from our previous Chow-test and welcomed result for our IV approach: at least one IV is relevant
+
+2. Wu-Hausman: We are on the edge as to conclude that we might be concerned about endogeneity of educ from the Hausman endogeneity test. A conservative analyst would rely on 2SLS rather than OLS and it's good to see that educ is significant in both OLS and 2SLS. Otherwise, it would be a hard decision to make between OLS and 2SLS (remember that standard errors from 2SLS will be generally much larger that those from OLS).
+
+3. Sargan Test: it is not needed, since we used single IV
+
+```{r run-ols, echo=TRUE, message=FALSE, warning=FALSE}
+
+## first-stage OLS, `cancellation_policy_flexible ~ controls + host_response_time`
+fmla.ols1.c1 = reformulate(rhs.1stage.c1, "cancellation_policy_flexible")
+print(fmla.ols1.c1)
+
+```
+
+```{r run-1stage-ols, echo=TRUE, message=FALSE, warning=FALSE}
+fit.1stage.c1 = lm(fmla.ols1.c1, data = airbnb_dta)
+summary(fit.1stage.c1)
+```
+It is interesting to see the result for the first-stage since we could tell if the instrument is relevant for the endogenous variable. Here in this case, it is safe to conclude that the proposed IV host_response_rate is correlated with the endogenous variable educ since the coefficient for host_response_rate is highly statistical significant with p-value being 2e-16 and the magnitude of “correlation” could be learned from the estimate itself, -0.0002082. We could test the correlation between cancellation_policy_flexible and host_response_rate via more direct approach.
+
+```{r single-IV-spearman, echo=TRUE, message=FALSE, warning=FALSE}
+
+# test the significance of correlation between two variables 
+cor.test(airbnb_dta$cancellation_policy_flexible, airbnb_dta$host_response_rate)
+
+```
+
+Only the relevance is tested (exlcusive exogeneity is not tested) as there is not any statistical test available to test if correlation between Z and epsilon is equal 0, when we have a single IV for the endogenous variable. Such test is only possible when we have more IVs than we need for the endogenous variable but still with restriction. In case 2, both relevance and exclusive exogeneity will be test as there are 2 IVs for the endogenous variable. 
+
+### Case 2: Multivariate 2SLS using 2 IVs (X = number_of_reviews, Z1 = amenities_score, Z2 = sentiment_score)
+In Case 2, we first run a multivariate 2SLS of price on number_of_reviews and others, with `amenities` as IV.
+```{r run-2sls-one-iv, echo=TRUE, message=FALSE, warning=FALSE}
+
+rhs.1stage.c2 = rhs[rhs != 'number_of_reviews'] 
+rhs.2stage.c2 = rhs[rhs != 'amenities_score']  # host_response_rate
+
+# 2SLS
+fmla.1stage.c2 = paste(rhs.1stage.c2, collapse = " + ")
+fmla.2stage.c2 = paste("price ~ ", paste(rhs.2stage.c2, collapse = " + "), sep = "")
+fmla.2sls.c2 = paste(fmla.2stage.c2, fmla.1stage.c2, sep = " | ")
+fmla.2sls.c2 = as.formula(fmla.2sls.c2)
+
+# print out the formula for 2SLS
+print(fmla.2sls.c2)
+
+```
+
+#### Using Single IV in 2SLS (Z = amenities_score)
+
+```{r run-2sls-summary, echo=TRUE, message=FALSE, warning=FALSE}
+
+# running a 2SLS with IV being `amenities_score`
+fit.2sls.c2 = ivreg(fmla.2sls.c2, data = airbnb_dta)
+summary(fit.2sls.c2, diagnostic = TRUE) 
+
+```
+From the 2SLS, we can see that the estimate for number_of_reviews is 0.2207, one unit increase in number of reviews causes 22.07% increase in pricing on average, holding all other equal.
+
+#### Using Multiple IVs in 2SLS (Z1 = amenities_score, Z2 = sentiment_score)
+
+```{r run-2sls-two-ivs, echo=TRUE, message=FALSE, warning=FALSE}
+
+# running a multivariate 2SLS of price on number_of_reviews and others, with `sentiment_score` and `amenities_score` as IV
+# observe that the formula for 2SLS highlights the "two stages" of OLS regression
+rhs.1stage.c2b = rhs[rhs != 'number_of_reviews'] 
+rhs.2stage.c2b = rhs[rhs != 'sentiment_score']  # sentiment_score
+rhs.2stage.c2b = rhs.2stage.c2b[rhs.2stage.c2b != 'amenities_score']  # amenities_score
+
+# 2SLS
+fmla.1stage.c2b = paste(rhs.1stage.c2b, collapse = " + ")
+fmla.2stage.c2b = paste("price ~ ", paste(rhs.2stage.c2b, collapse = " + "), sep = "")
+fmla.2sls.c2b = paste(fmla.2stage.c2b, fmla.1stage.c2b, sep = " | ")
+fmla.2sls.c2b = as.formula(fmla.2sls.c2b)
+
+# print out the formula for 2SLS
+print(fmla.2sls.c2b)
+
+```
+
+```{r run-2sls-two-ivs-summary, echo=TRUE, message=FALSE, warning=FALSE}
+
+# running a 2SLS with IVs being `sentiment_score` and `amenities_score`
+fit.2sls.c2b = ivreg(fmla.2sls.c2b, data = airbnb_dta)
+summary(fit.2sls.c2b)
+
+```
+
+Let's inspect the how relevant `sentiment_score` and `amenities_score` are in the first stage
+```{r run-2sls-two-ivs-relevance, echo=TRUE, message=FALSE, warning=FALSE}
+
+fmla.ols1.c2b = reformulate(fmla.1stage.c2b, "number_of_reviews")
+print(fmla.ols1.c2b)
+
+```
+
+```{r run-2sls-two-ivs-relevance-ols, echo=TRUE, message=FALSE, warning=FALSE}
+
+fit.ols1.c2b = lm(fmla.ols1.c2b, data = airbnb_dta)
+summary(fit.ols1.c2b)
+
+```
+From the 2SLS with two IVs (sentiment_score and amenities_score), we can see that the estimate for number_of_reviews is slightly lower than that from one IV (amenities_score), namely, one unit increase in number_of_reviews causes 18.68 % increase in price on average, holding all other equal. To see if amenities_score and sentiment_score are correlated with number_of_reviews, we ran the first stage of 2SLS, i.e. number_of_reviews ∼ controls + amenities_score + sentiment_score From its regression output, amenities_score is highly significant while sentiment_score is not significant. Overall, from relevance, amenities_score seems to be more strongly correlated with number_of_reviews, which partially explains why amenities_score was chosen as sole IV make the estimate for number_of_reviews higher.
+
+
+```{r multiple-IVs-spearman, echo=TRUE, message=FALSE, warning=FALSE}
+
+# test the significance of correlation between two variables 
+
+cor.test(airbnb_dta$number_of_reviews, airbnb_dta$amenities_score)
+cor.test(airbnb_dta$number_of_reviews, airbnb_dta$sentiment_score)
+
+
+```
+From the correlation test above, we can conclude the instrument variables amenities_score and sentiment_Score Z are correlated with number_of_reviews X, i.e. Corr(X,Z)≠0.
+
+### Results from Specification Test in Two Stage Least Square (2SLS)
+
+```{r run-2sls-two-ivs-specification-test, echo=TRUE, message=FALSE, warning=FALSE}
+
+# conduct specification tests after 2SLS
+summary(fit.2sls.c2b, diagnostic = TRUE)
+
+```
+From the result of specification tests:
+
+1. Weak instruments: We successfully reject the null in weak instrument tests. It means that we can conclude that the IVs is relevant to the endgenous variable (number_of_reviews).A consistent result from our previous Chow-test and welcomed result for our IV approach: at least one IV is relevant
+
+2. Wu-Hausman: We are on the edge as to conclude that we might be concerned about endogeneity of number_of_reviews from the Hausman endogeneity test. A conservative analyst would rely on 2SLS rather than OLS and it's good to see that number_of_reviews is significant in both OLS and 2SLS. Otherwise, it would be a hard decision to make between OLS and 2SLS (remember that standard errors from 2SLS will be generally much larger that those from OLS).
+
+3. Sargan Test: We fail to reject the null in over-identification (Sargan) test and happily conclude that both amenities_score and sentiment_score are exclusive exogenous IVs, assuming that at least one of the two is exogenous (untestable).

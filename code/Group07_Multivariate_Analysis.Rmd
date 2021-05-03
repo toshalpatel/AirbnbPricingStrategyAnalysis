@@ -1,0 +1,226 @@
+---
+title: "Multivariate Analysis"
+author: "Group 07"
+date: "4/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Preparation
+
+```{r load-libraries, echo=TRUE, message=FALSE, warning=FALSE}
+# load required packages
+## R Markdown
+library(dplyr) 
+library(tidyr)
+library(RColorBrewer)
+library(ggplot2)
+library(knitr)
+library(png)
+library(table1)
+library(gtsummary)
+library(gt)
+library(corrplot)
+library(xtable)
+library(car)
+library(DT)
+library(AER)    # applied econometrics with R
+library(plm)    # panel-lm
+library(stargazer)      # popular package for regression table-making
+library(lattice)
+```
+
+
+```{r read-dataset, echo=TRUE}
+dta_airbnb = read.csv('/IS5126_Team07_Dataset/Mar2019_Feb2020_Airbnb_panel_2.csv')
+```
+
+```{r, stepwise-automated-backward-model, echo=TRUE}
+rhs = c(colnames(dta_airbnb))
+dta_filtered_oct19=dta_airbnb%>% filter(last_scraped=='2019-10-01')
+str(dta_filtered_oct19)
+```
+
+```{r,}
+dta_filtered_oct19=dta_airbnb%>% filter(last_scraped=='2019-10-01')
+# removing the columns with factors less than 2
+keep <- function (x) {
+    if (is.factor(x) || is.character(x)) {
+        length(unique(x[!is.na(x)])) > 1
+    } else TRUE
+}
+
+dta_filtered_oct19_lm <- dta_filtered_oct19[sapply(dta_filtered_oct19, keep)]
+```
+
+
+```{r, stepwise-automated-backward-model, echo=TRUE}
+
+## Automating Model Selection based on 'AIC' score: using 'step()' function.
+# Instead of repeatedly using partial F-test, we can simply select model based 
+# on AIC scores small numbers better, penalizes models with lots of parameters 
+  # and poor fit automated backward stepwise model selection: select the model
+# with the lowest AIC score.
+
+rhs = c(colnames(dta_filtered_oct19_lm))
+
+rhs = rhs[rhs != 'listing_id']
+rhs = rhs[rhs != 'last_scraped']
+rhs = rhs[rhs != 'price']
+airbnb_ols = reformulate(rhs, "price")
+olsoct19 = lm(airbnb_ols, data = dta_filtered_oct19_lm)
+automated_backward_model <- step(olsoct19, direction = "backward", trace=1)
+summary(automated_backward_model)
+```
+```{r read-dataset, echo=TRUE}
+OLS_oct19=lm(formula = price ~ neighborhood_overview + experience + host_response_rate + 
+    host_is_superhost + bathrooms + 
+    bedrooms + accommodates + room_type_Entire_home_apt + room_type_Hotel_room + 
+    room_type_Private_room + amenities_score + cleaning_fee + 
+    price_for_extra_people + guests_included + minimum_nights + 
+    availability_30 + cancellation_policy_flexible + 
+    cancellation_policy_moderate + cancellation_policy_strict_14_with_grace_period + 
+    reviews_per_month + review_scores_rating + 
+    Subway_Count_Within_1000m + Bus_Count_Within_1000m + 
+    Restaurants_Count_Within_200m + Shops_Count_Within_1000m + 
+    neighbourhood_Ang_Mo_Kio + 
+    neighbourhood_Bedok + neighbourhood_Bukit_Panjang + neighbourhood_Bukit_Timah + 
+    neighbourhood_Central_Water_Catchment + neighbourhood_Choa_Chu_Kang + 
+    neighbourhood_Downtown_Core + neighbourhood_Geylang + 
+     neighbourhood_Jurong_East + neighbourhood_Jurong_West + 
+    neighbourhood_Kallang + neighbourhood_Marine_Parade + 
+    neighbourhood_Museum + neighbourhood_Newton + neighbourhood_Novena + 
+    neighbourhood_Orchard + neighbourhood_Outram + neighbourhood_Pasir_Ris + 
+    neighbourhood_Punggol + neighbourhood_Queenstown + neighbourhood_Sembawang + 
+    neighbourhood_Serangoon + neighbourhood_Southern_Islands + 
+    neighbourhood_Tampines + neighbourhood_Toa_Payoh + neighbourhood_Woodlands, 
+    data = dta_filtered_oct19_lm)
+```
+We checked the mean zero error assumption using the residual plot. The red line depicting the average thresholds is fairly flat - therefore satisfying the mean-zero error assumption. However we do see a fan-shaped residual plot indicating heteroskedasticity. Hence we do the Breusch-Pagen test for Homoskedasticity
+
+```{r model- residual plot,echo=TRUE}
+plot(OLS_oct19,1)
+```
+
+```{r model- q-q plot,echo=TRUE}
+#normality exists in the middle range and deviation is seen at the ends
+plot(OLS_oct19,2)
+```
+
+```{r model- diagnostic plot,echo=TRUE}
+#normality exists in the middle range and deviation is seen at the ends
+par(mfcol=c(2,2))
+plot(OLS_oct19)
+```
+
+
+```{r Breusch-Pagen,echo=TRUE}
+bptest(OLS_oct19)
+# Strong evidence that H0 can be rejected, so the model follows
+# Heteroskedasticty.
+```
+
+```{r White-Huber}
+# call for white-huber robust s.e.
+est = summary(OLS_oct19)
+est.robust = coeftest(OLS_oct19, vcov = sandwich)
+# make a comparison between s.e. and robust s.e.
+
+# let's list the coef and two different versions of s.e.'s
+coef.table.compare = cbind(est$coefficients[,1:2], est.robust[,1:2]) %>% round(4)
+colnames(coef.table.compare) = c("Est.","SE_OLS", "Est_White", "SE_White")
+print(coef.table.compare)
+```
+```{r Multicollinearity,echo=TRUE}
+vif_results=vif(OLS_oct19)
+vif_results
+#  We see values above 5 so there is multicollinearity
+```
+
+```{r Fix Multicollinearity,echo=TRUE}
+pca_room_type= prcomp(~room_type_Entire_home_apt+room_type_Private_room, data = dta_filtered_oct19_lm, center = TRUE, scale = TRUE)
+
+summary(pca_room_type)
+# examining the variable loadings for first 3 principal components (PCs) which account for 70% variation in the data.
+print(pca_room_type$rotation)
+# remember that PC is the normalized linear combination of ALL predictors, e.g. PC1 is normalized linear combination of 'hours', ...,'expersq',
+# with the coefficient of each predictor as the first column of 'pca_mroz$rotation':
+pca_room_type$rotation[,1]
+# ``normalized linear combination'' means that sum of squares of those coefficients add up to one, to make sure of this,
+sum(pca_room_type$rotation[,1]^2)
+# let's run a linear regression with top 3 PCs
+dta_filtered_oct19_lm_pca = dta_filtered_oct19_lm
+dta_filtered_oct19_lm_pca$pc1_room_type = pca_room_type$x[,"PC1"]
+
+pca_cancellation = prcomp(~cancellation_policy_flexible+cancellation_policy_moderate+cancellation_policy_strict_14_with_grace_period, data = dta_filtered_oct19_lm, center = TRUE, scale = TRUE)
+dta_filtered_oct19_lm_pca$pc1_cancellation = pca_cancellation$x[,"PC1"]
+
+```
+
+```{r model, echo=TRUE}
+OLS_oct19_multicollinearity=lm(formula = price ~ neighborhood_overview + experience + host_response_rate + 
+    host_is_superhost + bathrooms + 
+    bedrooms + accommodates + pc1_room_type + room_type_Hotel_room + amenities_score + cleaning_fee + 
+    price_for_extra_people + guests_included + minimum_nights + 
+    availability_30 + pc1_cancellation + 
+    reviews_per_month + review_scores_rating + 
+    Subway_Count_Within_1000m + Bus_Count_Within_1000m + 
+    Restaurants_Count_Within_200m + Shops_Count_Within_1000m + 
+    neighbourhood_Ang_Mo_Kio + 
+    neighbourhood_Bedok + neighbourhood_Bukit_Panjang + neighbourhood_Bukit_Timah + 
+    neighbourhood_Central_Water_Catchment + neighbourhood_Choa_Chu_Kang + 
+    neighbourhood_Downtown_Core + neighbourhood_Geylang + 
+     neighbourhood_Jurong_East + neighbourhood_Jurong_West + 
+    neighbourhood_Kallang + neighbourhood_Marine_Parade + 
+    neighbourhood_Museum + neighbourhood_Newton + neighbourhood_Novena + 
+    neighbourhood_Orchard + neighbourhood_Outram + neighbourhood_Pasir_Ris + 
+    neighbourhood_Punggol + neighbourhood_Queenstown + neighbourhood_Sembawang + 
+    neighbourhood_Serangoon + neighbourhood_Southern_Islands + 
+    neighbourhood_Tampines + neighbourhood_Toa_Payoh + neighbourhood_Woodlands, 
+    data = dta_filtered_oct19_lm_pca)
+```
+
+```{r model_summary, echo=TRUE}
+summary(OLS_oct19_multicollinearity)
+```
+We checked the mean zero error assumption using the residual plot. The red line depicting the average thresholds is fairly flat - therefore satisfying the mean-zero error assumption. However we do see a fan-shaped residual plot indicating heteroskedasticity. Hence we do the Breusch-Pagen test for Homoskedasticity
+
+```{r model- residual plot_2,echo=TRUE}
+plot(OLS_oct19_multicollinearity,1)
+```
+
+```{r model- q-q plot_2,echo=TRUE}
+#normality exists in the middle range and deviation is seen at the ends
+plot(OLS_oct19_multicollinearity,2)
+```
+
+```{r model- diagnostic plot_2,echo=TRUE}
+par(mfcol=c(2,2))
+plot(OLS_oct19_multicollinearity)
+```
+
+```{r Breusch-Pagen_2,echo=TRUE}
+bptest(OLS_oct19_multicollinearity)
+# Strong evidence that H0 can be rejected, so the model follows
+# Heteroskedasticty.
+```
+
+```{r White-Huber_2 , echo=TRUE}
+# call for white-huber robust s.e.
+est = summary(OLS_oct19_multicollinearity)
+est.robust = coeftest(OLS_oct19_multicollinearity, vcov = sandwich)
+# make a comparison between s.e. and robust s.e.
+
+# let's list the coef and two different versions of s.e.'s
+coef.table.compare = cbind(est$coefficients[,1:2], est.robust[,1:2]) %>% round(4)
+colnames(coef.table.compare) = c("Est.","SE_OLS", "Est_White", "SE_White")
+print(coef.table.compare)
+```
+
+```{r Multicollinearity_2,echo=TRUE}
+vif_results=vif(OLS_oct19_multicollinearity)
+vif_results
+#  We see no multi-collinearity
+```
