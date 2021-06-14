@@ -1,4 +1,4 @@
-# AirbnbPricingStrategyAnalysis
+# Airbnb Pricing Strategy Analysis
 Statistical Data Analysis for Airbnb Pricing in Singapore
 
 
